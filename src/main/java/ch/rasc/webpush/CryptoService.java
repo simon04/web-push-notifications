@@ -1,5 +1,8 @@
 package ch.rasc.webpush;
 
+import ch.rasc.webpush.dto.SubscriptionKeys;
+
+import java.math.BigInteger;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.security.InvalidAlgorithmParameterException;
@@ -8,13 +11,13 @@ import java.security.KeyFactory;
 import java.security.KeyPair;
 import java.security.KeyPairGenerator;
 import java.security.NoSuchAlgorithmException;
-import java.security.PrivateKey;
-import java.security.PublicKey;
 import java.security.SecureRandom;
+import java.security.interfaces.ECPrivateKey;
 import java.security.interfaces.ECPublicKey;
 import java.security.spec.ECGenParameterSpec;
+import java.security.spec.ECPrivateKeySpec;
 import java.security.spec.InvalidKeySpecException;
-import java.security.spec.PKCS8EncodedKeySpec;
+import java.security.spec.KeySpec;
 import java.security.spec.X509EncodedKeySpec;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -30,69 +33,54 @@ import javax.crypto.NoSuchPaddingException;
 import javax.crypto.spec.GCMParameterSpec;
 import javax.crypto.spec.SecretKeySpec;
 
-import org.springframework.stereotype.Component;
-
-@Component
 public class CryptoService {
 
-  private final SecureRandom SECURE_RANDOM = new SecureRandom();
+  private final SecureRandom secureRandom = new SecureRandom();
 
-  private KeyPairGenerator keyPairGenerator;
+  private final KeyPairGenerator keyPairGenerator;
 
-  private KeyFactory keyFactory;
+  private final KeyFactory keyFactory;
 
-  public CryptoService() {
-    try {
-      this.keyPairGenerator = KeyPairGenerator.getInstance("EC");
-      this.keyPairGenerator.initialize(new ECGenParameterSpec("secp256r1"));
-
-      this.keyFactory = KeyFactory.getInstance("EC");
-    }
-    catch (NoSuchAlgorithmException | InvalidAlgorithmParameterException e) {
-      Application.logger.error("init crypto", e);
-    }
+  public CryptoService() throws NoSuchAlgorithmException, InvalidAlgorithmParameterException {
+    this.keyPairGenerator = KeyPairGenerator.getInstance("EC");
+    this.keyPairGenerator.initialize(new ECGenParameterSpec("secp256r1"));
+    this.keyFactory = KeyFactory.getInstance("EC");
   }
 
-  public KeyPairGenerator getKeyPairGenerator() {
-    return this.keyPairGenerator;
+  ECPrivateKey fromUncompressedECPrivateKey(String vapidPrivateKey, ECPublicKey publicKey) throws InvalidKeySpecException {
+    final BigInteger integer = new BigInteger(1, Base64.getUrlDecoder().decode(vapidPrivateKey));
+    final ECPrivateKeySpec keySpec = new ECPrivateKeySpec(integer, publicKey.getParams());
+    return generatePrivate(keySpec);
   }
 
-  public PublicKey convertX509ToECPublicKey(byte[] encodedPublicKey)
-      throws InvalidKeySpecException {
-    X509EncodedKeySpec pubX509 = new X509EncodedKeySpec(encodedPublicKey);
-    return this.keyFactory.generatePublic(pubX509);
-  }
-
-  public PrivateKey convertPKCS8ToECPrivateKey(byte[] encodedPrivateKey)
-      throws InvalidKeySpecException {
-    PKCS8EncodedKeySpec pkcs8spec = new PKCS8EncodedKeySpec(encodedPrivateKey);
-    return this.keyFactory.generatePrivate(pkcs8spec);
+  ECPrivateKey generatePrivate(KeySpec keySpec) throws InvalidKeySpecException {
+    return (ECPrivateKey) keyFactory.generatePrivate(keySpec);
   }
 
   // https://stackoverflow.com/questions/30445997/loading-raw-64-byte-long-ecdsa-public-key-in-java
   // X509 head without (byte)4
-  private static byte[] P256_HEAD = Base64.getDecoder()
-      .decode("MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgA");
+  private static final byte[] P256_HEAD = Base64.getDecoder().decode("MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgA");
 
   // String must start with (byte)4
-  public ECPublicKey fromUncompressedECPublicKey(String encodedPublicKey)
-      throws InvalidKeySpecException {
+  ECPublicKey fromUncompressedECPublicKey(String encodedPublicKey) throws InvalidKeySpecException {
 
     byte[] w = Base64.getUrlDecoder().decode(encodedPublicKey);
     byte[] encodedKey = new byte[P256_HEAD.length + w.length];
     System.arraycopy(P256_HEAD, 0, encodedKey, 0, P256_HEAD.length);
     System.arraycopy(w, 0, encodedKey, P256_HEAD.length, w.length);
+    X509EncodedKeySpec pubX509 = new X509EncodedKeySpec(encodedKey);
+    return getGeneratePublic(pubX509);
+  }
 
-    X509EncodedKeySpec ecpks = new X509EncodedKeySpec(encodedKey);
-    return (ECPublicKey) this.keyFactory.generatePublic(ecpks);
+  ECPublicKey getGeneratePublic(X509EncodedKeySpec pubX509) throws InvalidKeySpecException {
+    return (ECPublicKey) keyFactory.generatePublic(pubX509);
   }
 
   // Result starts with (byte)4
-  public static byte[] toUncompressedECPublicKey(ECPublicKey publicKey) {
+  static byte[] toUncompressedECPublicKey(ECPublicKey publicKey) {
     byte[] result = new byte[65];
     byte[] encoded = publicKey.getEncoded();
-    System.arraycopy(encoded, P256_HEAD.length, result, 0,
-        encoded.length - P256_HEAD.length);
+    System.arraycopy(encoded, P256_HEAD.length, result, 0, encoded.length - P256_HEAD.length);
     return result;
   }
 
@@ -118,8 +106,7 @@ public class CryptoService {
 
   // https://tools.ietf.org/html/rfc8291
   // 3.4. Encryption Summary
-  public byte[] encrypt(String plainTextString, String uaPublicKeyString,
-      String authSecret, int paddingSize)
+  public byte[] encrypt(String plainTextString, SubscriptionKeys subscriptionKeys, int paddingSize)
       throws InvalidKeyException, NoSuchAlgorithmException, InvalidKeySpecException,
       InvalidAlgorithmParameterException, NoSuchPaddingException,
       IllegalBlockSizeException, BadPaddingException {
@@ -131,7 +118,7 @@ public class CryptoService {
     ECPublicKey asPublicKey = (ECPublicKey) asKeyPair.getPublic();
     byte[] uncompressedASPublicKey = toUncompressedECPublicKey(asPublicKey);
 
-    ECPublicKey uaPublicKey = fromUncompressedECPublicKey(uaPublicKeyString);
+    ECPublicKey uaPublicKey = fromUncompressedECPublicKey(subscriptionKeys.getP256dh());
 
     KeyAgreement keyAgreement = KeyAgreement.getInstance("ECDH");
     keyAgreement.init(asKeyPair.getPrivate());
@@ -140,21 +127,19 @@ public class CryptoService {
     byte[] ecdhSecret = keyAgreement.generateSecret();
 
     byte[] salt = new byte[16];
-    this.SECURE_RANDOM.nextBytes(salt);
+    this.secureRandom.nextBytes(salt);
 
     // ## Use HKDF to combine the ECDH and authentication secrets
     // # HKDF-Extract(salt=auth_secret, IKM=ecdh_secret)
     // PRK_key = HMAC-SHA-256(auth_secret, ecdh_secret)
     Mac hmacSHA256 = Mac.getInstance("HmacSHA256");
-    hmacSHA256
-        .init(new SecretKeySpec(Base64.getUrlDecoder().decode(authSecret), "HmacSHA256"));
+    hmacSHA256.init(new SecretKeySpec(Base64.getUrlDecoder().decode(subscriptionKeys.getAuth()), "HmacSHA256"));
     byte[] prkKey = hmacSHA256.doFinal(ecdhSecret);
 
     // # HKDF-Expand(PRK_key, key_info, L_key=32)
     // key_info = "WebPush: info" || 0x00 || ua_public || as_public
 
-    byte[] keyInfo = concat("WebPush: info\0".getBytes(StandardCharsets.UTF_8),
-        toUncompressedECPublicKey(uaPublicKey), uncompressedASPublicKey);
+    byte[] keyInfo = concat("WebPush: info\0".getBytes(StandardCharsets.UTF_8), toUncompressedECPublicKey(uaPublicKey), uncompressedASPublicKey);
     // IKM = HMAC-SHA-256(PRK_key, key_info || 0x01)
     hmacSHA256.init(new SecretKeySpec(prkKey, "HmacSHA256"));
     hmacSHA256.update(keyInfo);
@@ -188,8 +173,7 @@ public class CryptoService {
     nonce = Arrays.copyOfRange(nonce, 0, 12);
 
     Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
-    cipher.init(Cipher.ENCRYPT_MODE, new SecretKeySpec(cek, "AES"),
-        new GCMParameterSpec(128, nonce));
+    cipher.init(Cipher.ENCRYPT_MODE, new SecretKeySpec(cek, "AES"), new GCMParameterSpec(128, nonce));
 
     List<byte[]> inputs = new ArrayList<>();
     byte[] plainTextBytes = plainTextString.getBytes(StandardCharsets.UTF_8);
@@ -206,10 +190,6 @@ public class CryptoService {
     ByteBuffer encryptedArrayLength = ByteBuffer.allocate(4);
     encryptedArrayLength.putInt(encrypted.length);
 
-    byte[] header = concat(salt, encryptedArrayLength.array(),
-        new byte[] { (byte) uncompressedASPublicKey.length }, uncompressedASPublicKey);
-
-    return concat(header, encrypted);
+    return concat(salt, encryptedArrayLength.array(), new byte[]{(byte) uncompressedASPublicKey.length}, uncompressedASPublicKey, encrypted);
   }
-
 }
