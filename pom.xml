@@ -8,10 +8,10 @@
 		<version>2.6.1</version>
 		<relativePath/>
 	</parent>
-	<groupId>ch.rasc</groupId>
-	<artifactId>webpush</artifactId>
-	<version>0.0.1</version>
-	<name>webpush</name>
+	<groupId>net.simon04</groupId>
+	<artifactId>web-push-notifications</artifactId>
+	<version>1.0.0-SNAPSHOT</version>
+	<name>web-push-notifications</name>
 
 	<properties>
 		<java.version>17</java.version>
