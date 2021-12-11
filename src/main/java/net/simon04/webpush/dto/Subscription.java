@@ -1,4 +1,4 @@
-package ch.rasc.webpush.dto;
+package net.simon04.webpush.dto;
 
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;

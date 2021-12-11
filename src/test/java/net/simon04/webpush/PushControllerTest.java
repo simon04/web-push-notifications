@@ -1,7 +1,7 @@
-package ch.rasc.webpush;
+package net.simon04.webpush;
 
-import ch.rasc.webpush.dto.Subscription;
-import ch.rasc.webpush.dto.SubscriptionKeys;
+import net.simon04.webpush.dto.Subscription;
+import net.simon04.webpush.dto.SubscriptionKeys;
 
 import java.net.http.HttpRequest;
 
